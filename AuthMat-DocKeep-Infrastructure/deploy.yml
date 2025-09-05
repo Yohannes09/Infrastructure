@@ -1,0 +1,95 @@
+---
+- name: Deploy authmat + dockeep infra with Docker Compose
+  hosts: targets  # Matches the group in inventory.ini
+  become: yes  # Use sudo for tasks requiring elevated privileges (e.g., installing packages, Docker)
+  vars:
+    deployment_dir: /opt/deployment  # Directory on target host for repo clones
+    infra_repo_url: https://github.com/Yohannes09/Infrastructure
+    authmat_repo_url: https://github.com/Yohannes09/AuthMat
+    dockeep_repo_url: https://github.com/Yohannes09/DocKeep
+    repo_branch: main  # Update with your branch name (e.g., main, master, dev)
+    compose_files:
+      - "{{ deployment_dir }}/AuthMat-DocKeep-Infrastructure/docker-compose.yml"
+      - "{{ deployment_dir }}/server/Authentication-Service/docker-compose.yml"
+      - "{{ deployment_dir }}/server/docker-compose.yml"
+    docker_network: shared-net  # Ensure all compose files use this network
+
+  tasks:
+    # Install dependencies on Debian-based systems (skip for localhost if Docker Desktop is installed)
+    - name: Install Docker, Compose, and Git on Debian-based systems
+      apt:
+        name:
+          - docker.io
+          - docker-compose-v2  # Docker Compose CLI plugin
+          - git
+        state: present
+        update_cache: yes
+      when: ansible_os_family == 'Debian'  # Adjust for RedHat (use yum/dnf) or skip for macOS
+
+    # Ensure Docker service is running
+    - name: Ensure Docker is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      when: ansible_os_family != 'Darwin'  # Skip for macOS (Docker Desktop handles this)
+
+    # For macOS localhost, ensure Docker Desktop is running (optional, manual step)
+    # - name: Ensure Docker Desktop is running on macOS
+    #   command: open -a Docker
+    #   when: ansible_os_family == 'Darwin'
+
+    - name: Create deployment directory
+      file:
+        path: "{{ deployment_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Clone infra repo
+      git:
+        repo: "{{ infra_repo_url }}"
+        dest: "{{ deployment_dir }}/infra-repo"
+        version: "{{ repo_branch }}"
+        force: yes  # Overwrite local changes if needed
+        accept_hostkey: yes  # Auto-accept SSH host key (for first clone)
+      register: infra_clone
+
+    - name: Clone authmat repo
+      git:
+        repo: "{{ authmat_repo_url }}"
+        dest: "{{ deployment_dir }}/authmat-repo"
+        version: "{{ repo_branch }}"
+        force: yes
+        accept_hostkey: yes
+      register: authmat_clone
+
+    - name: Clone dockeep repo
+      git:
+        repo: "{{ dockeep_repo_url }}"
+        dest: "{{ deployment_dir }}/dockeep-repo"
+        version: "{{ repo_branch }}"
+        force: yes
+        accept_hostkey: yes
+      register: dockeep_clone
+
+    - name: Deploy and start all services with merged compose files
+      community.docker.docker_compose_v2:
+        project_src: "{{ deployment_dir }}"
+        files: "{{ compose_files }}"
+        state: present  # Brings up services (use 'absent' to tear down, 'restarted' to restart)
+        build: always  # Build images if 'build:' is in compose files (set to 'never' if using pre-built images)
+        pull: missing  # Pull images if not present (set to 'always' for fresh pulls)
+        recreate: auto  # Recreate containers if config changes
+        remove_orphans: true  # Remove containers not defined in compose files
+        wait: true  # Wait for services to be healthy
+        wait_timeout: 300  # 5 minutes max wait
+      register: compose_result
+
+    - name: Verify services are running
+      command: docker ps
+      register: docker_output
+      failed_when: docker_output.rc != 0
+
+    - name: Display running containers
+      debug:
+        var: docker_output.stdout_lines

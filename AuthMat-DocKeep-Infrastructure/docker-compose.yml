@@ -1,0 +1,12 @@
+services:
+  redis:
+    restart: always
+    image: ${REDIS_IMAGE}
+    ports:
+      - "${REDIS_PORT}:6379"
+
+  kafka:
+    restart: always
+    image: ${KAFKA_IMAGE}
+    ports:
+      - "${KAFKA_PORT}:9092"
