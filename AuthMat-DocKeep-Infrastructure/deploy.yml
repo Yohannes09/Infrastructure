@@ -58,7 +58,6 @@
       git:
         repo: "{{ authmat_repo_url }}"
         dest: "{{ deployment_dir }}/authmat-repo"
-        version: "{{ repo_branch }}"
         force: yes
         accept_hostkey: yes
       register: authmat_clone
@@ -72,18 +71,110 @@
         accept_hostkey: yes
       register: dockeep_clone
 
-    - name: Deploy and start all services with merged compose files
+
+    - name: Deploy Infrastructure
+      vars_files:
+        - group_vars/infra_secrets.yml
+        - group_vars/common_secrets.yml
       community.docker.docker_compose_v2:
-        project_src: "{{ deployment_dir }}"
-        files: "{{ compose_files }}"
+        project_src: "{{ deployment_dir }}/infra-repo/AuthMat-DocKeep-Infrastructure"
+        files:
+          - "docker-compose.yml"
         state: present  # Brings up services (use 'absent' to tear down, 'restarted' to restart)
-        build: always  # Build images if 'build:' is in compose files (set to 'never' if using pre-built images)
+        build: never  # Build images if 'build:' is in compose files (set to 'never' if using pre-built images)
+        environment:
+          REDIS_IMAGE: "{{ common_docker_env_vars.redis-image }}"
+          REDIS_PORT: "{{ infra-env-vars.redis-port }}"
+          KAFKA_IMAGE: "{{ common_docker_env_vars.kafka-image }}"
+          KAFKA_PORT: "{{ infra-env-vars.kafka-port }}"
+
         pull: missing  # Pull images if not present (set to 'always' for fresh pulls)
         recreate: auto  # Recreate containers if config changes
         remove_orphans: true  # Remove containers not defined in compose files
         wait: true  # Wait for services to be healthy
         wait_timeout: 300  # 5 minutes max wait
       register: compose_result
+
+
+    - name: Deploy AuthMat
+      vars_files:
+        - group_vars/infra_secrets.yml
+        - group_vars/authmat_secrets.yml
+      community.docker.docker_compose_v2:
+        project_src: "{{ deployment_dir }}/authmat-repo/server/Authentication-Service"
+        files:
+          - "docker-compose.yml"
+        state: present
+        build: always
+        environment:
+          KAFKA_BOOTSTRAP_SERVERS: "{{ infra-env-vars.kafka-host }}:{{ infra-env-vars.kafka-port }}"
+          REDIS_HOST: "{{ infra-env-vars.redis-host }}"
+          REDIS_PORT: "{{ infra-env-vars.redis-port }}"
+
+          DB_URL: "{{ authmat-env-vars.DB_URL }}"
+          DB_USERNAME: "{{ authmat-env-vars.DB_USERNAME }}"
+          DB_PASSWORD: "{{ authmat-env-vars.DB_PASSWORD }}"
+          DB_DRIVER: "{{ authmat-env-vars.DB_DRIVER }}"
+          DB_MAX_POOL_SIZE: "{{ authmat-env-vars.DB_MAX_POOL_SIZE }}"
+          DB_MIN_IDLE_CONNECTIONS: "{{ authmat-env-vars.DB_MIN_IDLE_CONNECTIONS }}"
+          DB_IDLE_TIMEOUT_MS: "{{ authmat-env-vars.DB_IDLE_TIMEOUT_MS }}"
+          DB_MAX_LIFETIME_MS: "{{ authmat-env-vars.DB_MAX_LIFETIME_MS }}"
+
+          ACCESS_TOKEN_VALIDITY_MINUTES: "{{ authmat-env-vars.ACCESS_TOKEN_VALIDITY_MINUTES }}"
+          ACCESS_TOKEN_HISTORY_TRACE: "{{ authmat-env-vars.ACCESS_TOKEN_HISTORY_TRACE }}"
+          ACCESS_TOKEN_KEY_SIZE: "{{ authmat-env-vars.ACCESS_TOKEN_KEY_SIZE }}"
+          ACCESS_TOKEN_KEY_ALGORITHM: "{{ authmat-env-vars.ACCESS_TOKEN_KEY_ALGORITHM }}"
+          ACCESS_TOKEN_JWT_ALGORITHM: "{{ authmat-env-vars.ACCESS_TOKEN_JWT_ALGORITHM }}"
+          ACCESS_TOKEN_SIGNING_KEY_ROTATION_RATE_MINUTES: "{{ authmat-env-vars.ACCESS_TOKEN_SIGNING_KEY_ROTATION_MINUTES }}"
+
+          REFRESH_TOKEN_VALIDITY_MINUTES: "{{ authmat-env-vars.REFRESH_TOKEN_VALIDITY_MINUTES }}"
+          REFRESH_TOKEN_HISTORY_TRACE: "{{ authmat-env-vars.REFRESH_TOKEN_HISTORY_TRACE }}"
+          REFRESH_TOKEN_KEY_SIZE: "{{ authmat-env-vars.REFRESH_TOKEN_KEY_SIZE }}"
+          REFRESH_TOKEN_KEY_ALGORITHM: "{{ authmat-env-vars.REFRESH_TOKEN_KEY_ALGORITHM }}"
+          REFRESH_TOKEN_JWT_ALGORITHM: "{{ authmat-env-vars.REFRESH_TOKEN_JWT_ALGORITHM }}"
+          REFRESH_TOKEN_SIGNING_KEY_ROTATION_RATE_MINUTES: "{{ authmat-env-vars.REFRESH_TOKEN_SIGNING_KEY_ROTATION_MINUTES }}"
+        pull: missing
+        recreate: auto
+        remove_orphans: true
+        wait: true
+        wait_timeout: 300
+
+
+    - name: Deploy DocKeep
+      vars_files:
+        - group_vars/infra_secrets.yml
+        - group_vars/dockeep_secrets.yml
+      community.docker.docker_compose_v2:
+        project_src: "{{ deployment_dir }}/dockeep-repo/server/Authentication-Service"
+        files:
+          - "docker-compose.yml"
+        state: present
+        build: always
+        environment:
+          KAFKA_BOOTSTRAP_SERVERS: "{{ infra-env-vars.kafka-host }}:{{ infra-env-vars.kafka-port }}"
+          REDIS_HOST: "{{ infra-env-vars.redis-host }}"
+          REDIS_PORT: "{{ infra-env-vars.redis-port }}"
+
+          DB_URL: "{{ dockeep-env-vars.DB_URL }}"
+          DB_USERNAME: "{{ dockeep-env-vars.DB_USERNAME }}"
+          DB_PASSWORD: "{{ dockeep-env-vars.DB_PASSWORD }}"
+          DB_DRIVER: "{{ dockeep-env-vars.DB_DRIVER }}"
+          DB_MAX_POOL_SIZE: "{{ dockeep-env-vars.DB_MAX_POOL_SIZE }}"
+          DB_MIN_IDLE_CONNECTIONS: "{{ dockeep-env-vars.DB_MIN_IDLE_CONNECTIONS }}"
+          DB_IDLE_TIMEOUT_MS: "{{ dockeep-env-vars.DB_IDLE_TIMEOUT_MS }}"
+          DB_MAX_LIFETIME_MS: "{{ dockeep-env-vars.DB_MAX_LIFETIME_MS }}"
+
+          AWS_ACCESS_KEY: "{{ dockeep-env-vars.AWS_ACCESS_KEY }}"
+          AWS_SECRET_KEY: "{{ dockeep-env-vars.AWS_SECRET_KEY }}"
+          AWS_REGION: "{{ dockeep-env-vars.AWS_REGION }}"
+          AWS_BUCKET_NAME: "{{ dockeep-env-vars.AWS_BUCKET_NAME }}"
+
+        pull: missing
+        recreate: auto
+        remove_orphans: true
+        wait: true
+        wait_timeout: 300
+
 
     - name: Verify services are running
       command: docker ps
